@@ -1,30 +1,18 @@
-#!/usr/bin/env python3
-"""Compose the 18 Nov 2026 front-page image for make.fun news-image-20261118.
+"""Build the 18 Nov 2026 front page (1024x1024 PNG) from the hero photo.
 
-Layout: 1024x1024 newspaper front page. Masthead, AI-generated hero photo
-(burning tanker, Strait of Hormuz), lead headline US-Iran strikes, two
-second-story panels (APEC Shenzhen, Ebola Congo), bottom strip of six more
-stories. Deterministic: same input -> same output bytes (PNG, fixed metadata
-via Pillow default; no timestamps embedded by Pillow PNG encoder).
+Layout: masthead, hero photo with caption, lead story, 2x2 story grid,
+ticker strip, footer. All text is drawn with PIL so the page is readable
+at a glance; the hero is the only photographic element.
 """
-import os
+import textwrap
+from pathlib import Path
+
 from PIL import Image, ImageDraw, ImageFont
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-HERO = os.path.join(HERE, "assets",
-                    "media-generation-hero-tanker-0-d78d3fae-d7ec-4a74-933d-4a881e07bda7.png")
-OUT = os.path.join(HERE, "news.png")
-
+HERE = Path(__file__).resolve().parent
 W, H = 1024, 1024
-NAVY = (16, 28, 51)
-RED = (193, 18, 31)
-DARKRED = (140, 20, 28)
-INK = (20, 20, 20)
-GREY = (70, 70, 70)
-PANEL = (244, 244, 244)
-RULE = (210, 210, 210)
-
 SERIF_B = "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf"
+SERIF = "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf"
 SANS_B = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 SANS = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
 
@@ -33,102 +21,99 @@ def font(path, size):
     return ImageFont.truetype(path, size)
 
 
-def wrap(draw, text, fnt, max_w):
-    words, lines, cur = text.split(), [], ""
-    for w in words:
-        t = (cur + " " + w).strip()
-        if draw.textlength(t, font=fnt) <= max_w:
-            cur = t
+def wrap(draw, text, fnt, width):
+    lines, cur = [], ""
+    for word in text.split():
+        trial = (cur + " " + word).strip()
+        if draw.textlength(trial, font=fnt) <= width:
+            cur = trial
         else:
             if cur:
                 lines.append(cur)
-            cur = w
+            cur = word
     if cur:
         lines.append(cur)
     return lines
 
 
+def draw_wrapped(draw, x, y, text, fnt, width, fill="black", leading=4):
+    lines = wrap(draw, text, fnt, width)
+    for line in lines:
+        draw.text((x, y), line, font=fnt, fill=fill)
+        y += fnt.size + leading
+    return y
+
+
 def main():
     img = Image.new("RGB", (W, H), "white")
     d = ImageDraw.Draw(img)
+    d.rectangle([0, 0, W - 1, H - 1], outline="black", width=4)
 
-    # --- masthead ---
-    d.rectangle([0, 0, W, 78], fill=NAVY)
-    d.text((28, 14), "THE WORLD IN ONE PAGE", font=font(SERIF_B, 44), fill="white")
-    d.text((996, 20), "TUESDAY", font=font(SANS_B, 20), fill=(180, 190, 205),
-           anchor="ra")
-    d.text((996, 44), "18 NOV 2026", font=font(SANS_B, 24), fill="white", anchor="ra")
-    d.rectangle([0, 78, W, 84], fill=RED)
+    # Masthead
+    d.text((512, 18), "THE WORLD IN ONE DAY", font=font(SERIF_B, 58),
+           fill="black", anchor="ma")
+    d.text((512, 92), "WEDNESDAY 18 NOVEMBER 2026  •  TEN STORIES, ONE PAGE",
+           font=font(SANS_B, 20), fill="black", anchor="ma")
+    d.line([(24, 128), (1000, 128)], fill="black", width=3)
 
-    # --- hero photo: center-crop 1920x1280 -> 1024x386 ---
-    hero = Image.open(HERO).convert("RGB")
-    ch = int(1920 * 386 / 1024)
-    y0 = (1280 - ch) // 2
-    hero = hero.crop((0, y0, 1920, y0 + ch)).resize((1024, 386), Image.LANCZOS)
-    img.paste(hero, (0, 84))
+    # Hero photo
+    hero = Image.open(HERE / "media-generation-hero-tanker-18nov-0-399a38bf-7e39-4670-a39c-22fce1a0ad09.png").convert("RGB")
+    tw, th = 976, 300
+    ratio = max(tw / hero.width, th / hero.height)
+    hero = hero.resize((int(hero.width * ratio) + 1, int(hero.height * ratio) + 1))
+    x0 = (hero.width - tw) // 2
+    y0 = (hero.height - th) // 2
+    hero = hero.crop((x0, y0, x0 + tw, y0 + th))
+    img.paste(hero, (24, 140))
+    d.rectangle([24, 140, 1000, 440], outline="black", width=2)
+    d.text((24, 448), "A tanker burns in the Strait of Hormuz after a night of strikes.",
+           font=font(SANS, 17), fill="#333333")
 
-    # --- kicker + lead headline ---
-    d.rectangle([0, 470, W, 506], fill=RED)
-    d.text((28, 477), "WAR IN THE GULF  —  STRAIT OF HORMUZ",
-           font=font(SANS_B, 24), fill="white")
-    d.text((28, 516), "US STRIKES IRAN MISSILE SITE", font=font(SERIF_B, 38), fill=INK)
-    d.text((28, 562), "ON QESHM ISLAND — TEHRAN HITS BACK",
-           font=font(SERIF_B, 38), fill=INK)
-    sub = ("Iran retaliates on US bases in Bahrain and Kuwait; a tanker burns in "
-           "the Strait of Hormuz as shipping braces for closure.")
-    y = 616
-    for line in wrap(d, sub, font(SANS, 21), 968):
-        d.text((28, y), line, font=font(SANS, 21), fill=GREY)
-        y += 27
+    # Lead story
+    y = draw_wrapped(d, 24, 478, "WAR IN THE GULF WIDENS: US HITS QESHM, IRAN HITS BACK",
+                     font(SERIF_B, 34), 976, leading=2)
+    y = draw_wrapped(d, 24, y + 2,
+                     "US jets strike an Iranian missile site on Qeshm Island; Iran drones hit "
+                     "US bases in Bahrain and Kuwait as tankers come under fire in Hormuz.",
+                     font(SERIF, 21), 976, leading=2)
 
-    d.line([(28, 684), (996, 684)], fill=RULE, width=2)
+    d.line([(24, y + 10), (1000, y + 10)], fill="black", width=2)
+    gy = y + 22
 
-    # --- middle row: two panels ---
-    def panel(x, w, bar, bar_text, head, body):
-        d.rectangle([x, 700, x + w, 734], fill=bar)
-        d.text((x + 14, 706), bar_text, font=font(SANS_B, 21), fill="white")
-        d.rectangle([x, 734, x + w, 880], fill=PANEL)
-        yy = 746
-        for line in wrap(d, head, font(SERIF_B, 29), w - 28):
-            d.text((x + 14, yy), line, font=font(SERIF_B, 29), fill=INK)
-            yy += 34
-        yy += 6
-        for line in wrap(d, body, font(SANS, 19), w - 28):
-            d.text((x + 14, yy), line, font=font(SANS, 19), fill=GREY)
-            yy += 23
-
-    panel(28, 472, NAVY, "APEC  •  SHENZHEN",
-          "XI AND PUTIN DENOUNCE SANCTIONS",
-          "Trump lands in China; three-way summit Thursday.")
-    panel(524, 472, DARKRED, "EBOLA  •  CONGO",
-          "EBOLA PASSES 11,000 CASES",
-          "Second-largest ever; children hit hardest.")
-
-    d.line([(28, 896), (996, 896)], fill=RULE, width=2)
-    d.text((28, 906), "ALSO TODAY", font=font(SANS_B, 20), fill=RED)
-
-    items = [
-        ("VOYAGER 1 — ", "First craft one light-day out."),
-        ("ALASKA — ", "Democrats flip Senate seat, 56–44."),
-        ("MEASLES — ", "US loses elimination status, 26 yrs."),
-        ("NVIDIA — ", "Record revenue; board blocks Huang."),
-        ("EUROPE — ", "8,000+ bomb threats in a month."),
-        ("GAZA — ", "Cold kills in tents as truce frays."),
+    # 2x2 grid of stories
+    stories = [
+        ("APEC SHENZHEN",
+         "Xi and Putin denounce Western sanctions; Trump lands in China and a "
+         "three-way summit is set for Thursday."),
+        ("EBOLA PASSES 11,000",
+         "Congo's outbreak becomes the second-largest ever recorded; children "
+         "are hit hardest as clinics run out of beds."),
+        ("TANKERS UNDER FIRE",
+         "An ADNOC vessel is attacked, 11 crew hurt and one missing; the Tara Gas "
+         "burns and 24 crew are evacuated off Oman."),
+        ("VOYAGER 1, ONE LIGHT-DAY",
+         "Voyager 1 becomes the first craft one light-day from Earth, still "
+         "sending data home after 49 years in space."),
     ]
-    col_x = [28, 524]
-    y = 936
-    for i, (lead, body) in enumerate(items):
-        x = col_x[i % 2]
-        if i % 2 == 0 and i > 0:
-            y += 26
-        line = lead + body
-        assert d.textlength(line, font=font(SANS, 18)) <= 448, line
-        lead_w = d.textlength(lead, font=font(SANS_B, 18))
-        d.text((x, y), lead, font=font(SANS_B, 18), fill=INK)
-        d.text((x + lead_w, y), body, font=font(SANS, 18), fill=INK)
+    col_w, row_h = 478, 132
+    for i, (head, body) in enumerate(stories):
+        cx = 24 + (i % 2) * 498
+        cy = gy + (i // 2) * row_h
+        if i % 2 == 1:
+            d.line([(512, cy), (512, cy + row_h - 14)], fill="#999999", width=1)
+        draw_wrapped(d, cx, cy, head, font(SANS_B, 21), col_w, leading=1)
+        draw_wrapped(d, cx, cy + 30, body, font(SANS, 17), col_w, leading=1)
 
-    img.save(OUT, optimize=True)
-    print("saved", OUT, os.path.getsize(OUT), "bytes")
+    ty = gy + 2 * row_h + 6
+    d.line([(24, ty), (1000, ty)], fill="black", width=2)
+    ticker = ("ALSO TODAY:  Democrats flip the Alaska Senate seat 56-44  •  Nvidia posts record revenue  •  "
+              "8,000+ bomb threats across Europe in a month  •  Cold kills in Gaza tents  •  "
+              "Kerch bridge still closed after Tuesday's strike")
+    ty = draw_wrapped(d, 24, ty + 10, ticker, font(SANS_B, 17), 976, leading=3)
+    d.text((512, 992), "THE WORLD IN ONE DAY — 18 NOVEMBER 2026",
+           font=font(SANS, 15), fill="#555555", anchor="ma")
+    img.save(HERE / "news.png", optimize=True)
+    print("wrote", HERE / "news.png", (HERE / "news.png").stat().st_size)
 
 
 if __name__ == "__main__":
